@@ -1,5 +1,12 @@
 # Common performance optimizations
 
+This repo includes a list of common performance pitfalls/optimizations.
+Some of these optimizations are automatically smoothed by Dolt. Some (like
+joins) occasionally require hand-tuning.
+
+Every optimization has a companion benchmark implementation in this repo.
+Benchmarks were run with Dolt `0.75.3`.
+
 Table of Contents:
 
 1. [Joins](#joins)
