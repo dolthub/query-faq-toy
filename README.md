@@ -179,6 +179,17 @@ InnerJoin
      ├─ name: uv
      └─ columns: [u v r s]
 <=>
+Filter
+ ├─ EXISTS Subquery
+ │   ├─ cacheable: false
+ │   └─ Filter
+ │       ├─ (x = u)
+ │       └─ Table
+ │           └─ name: uv
+ └─ Table
+     ├─ name: xy
+     └─ columns: [x y z w]  
+<=>
 LookupJoin
  ├─ Eq
  │   ├─ x:0!null
@@ -217,17 +228,6 @@ MergeJoin
      ├─ index: [uv.u]
      ├─ static: [{[NULL, ∞)}]
      └─ columns: [u v r s]
-<=>
-Filter
- ├─ EXISTS Subquery
- │   ├─ cacheable: false
- │   └─ Filter
- │       ├─ (x = u)
- │       └─ Table
- │           └─ name: uv
- └─ Table
-     ├─ name: xy
-     └─ columns: [x y z w]  
 ```
 
 ### Join Order
@@ -331,19 +331,19 @@ Filter
  ├─ Eq
  │   ├─ x:0!null
  │   └─ 1 (bigint)
- └─ Table
-     ├─ name: xy
-     └─ columns: [x]
-=>
-Filter
- ├─ Eq
- │   ├─ x:0!null
- │   └─ 1 (bigint)
  └─ Project
      ├─ columns: [x:0!null]
      └─ Table
          ├─ name: xy
          └─ columns: [x y z w]
+=>
+Filter
+ ├─ Eq
+ │   ├─ x:0!null
+ │   └─ 1 (bigint)
+ └─ Table
+     ├─ name: xy
+     └─ columns: [x]
 ```
 
 The benefit is small, but adds up for tables with many columns
