@@ -136,9 +136,9 @@ join between two 100-row tables with 0-99 integer entries. Not every physical
 operator is available for every join. It is often possible to add indexes to
 support a particular join strategy.
 
-```sql
+```
 BenchmarkJoinOp/inner_join-opt-12         	                  63	  17367096 ns/op
-BenchmarkJoinOp/exists_subquery-opt-12                       139	   9470630 ns/op
+BenchmarkJoinOp/exists_subquery-opt-12        	                 139	    9470630 ns/op
 BenchmarkJoinOp/lookup_join-opt-12        	                3631	    321932 ns/op
 BenchmarkJoinOp/hash_join-opt-12         	                5151	    195707 ns/op
 BenchmarkJoinOp/merge_join-opt-12        	               10000	    112757 ns/op
