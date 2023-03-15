@@ -1,122 +1,18 @@
 # Common performance optimizations
 
-## Indexscan vs Tablescan
+Table of Contents:
 
-It is common to push a permissive filter into a tablescan.
-The result is that we scan the entire table, just in a more
-expensive way.
-
-The plans below compare a tablescan that will read every row
-with the index range scan machinery, versus reading every row:
-
-```
-Project
- ├─ columns: [x:0!null, y:1!null, z:2!null]
- └─ IndexedTableAccess(xy)
-     ├─ index: [xy.y]
-     ├─ static: [{(-1, ∞)}]
-     └─ columns: [x y z w]
-=>
-Project
- ├─ columns: [x:0!null, y:1!null, z:2!null]
- └─ Table
-     ├─ name: xy
-     └─ columns: [x y z w]
-```
-
-Using the index range scan machinery introduces a non-negligible overhead:
-
-```
-BenchmarkIndexScan/index_scan_pre-opt
-BenchmarkIndexScan/index_scan_pre-opt-12         	     830	   1421220 ns/op
-BenchmarkIndexScan/index_scan_post-opt
-BenchmarkIndexScan/index_scan_post-opt-12        	    1239	    886823 ns/op
-```
-
-## Decorrelate Subqueries
-
-Subqueries can either be cacheable, or non-cacheable. The later are also
-called "correlated" subqueries, because they need to be wholesale executed
-once for each row in the outer scope.
-
-The first plan below executes the EXISTS subquery once for each `xy` row.
-It is not cacheable because its execution depends on `xy.x`; it is correlated
-to the outer scope. The second plan hoists the filter, freeing the subquery
-into a cacheable form:
-
-```
-Filter
- ├─ EXISTS Subquery
- │   ├─ cacheable: false
- │   └─ Filter
- │       ├─ (x = 0)
- │       └─ Table
- │           └─ name: uv
- └─ Table
-     ├─ name: xy
-     └─ columns: [x y z w]
-=>
-Filter
- ├─ EXISTS Subquery
- │   ├─ cacheable: true
- │   └─ Table
- │       └─ name: uv
- └─ Filter
-     ├─ Eq
-     │   ├─ x:0!null
-     │   └─ 0 (bigint)
-     └─ Table
-         ├─ name: xy
-         └─ columns: [x y z w]
-```
-
-The cacheable form executes the subquery once, rather than 100 times:
-
-```
-BenchmarkDecorrelate/uncorrelated_subquery_pre-opt
-BenchmarkDecorrelate/uncorrelated_subquery_pre-opt-12         	      46	  22258375 ns/op
-BenchmarkDecorrelate/uncorrelated_subquery_post-opt
-BenchmarkDecorrelate/uncorrelated_subquery_post-opt-12        	    5415	    193153 ns/op
-```
-
-## Covering Index Lookup
-
-Different indexes can be used to read data from disk. A "covering" index
-scan is one that provides all columns projected from the scan. A "noncovering"
-scan has to read from the lookup index, and then do a second read into the primary
-key to fill out additional rows.
-
-The first query uses the `xy.y` index to read `(y): (x)`, (`y` is the secondary key,
-`x` is the primary key), but is still missing `z`. So the first query must
-do a lookup into the primary key to fetch the remaining field.
-
-The second query is keyed on `(x, z) : ()`, and already has the fields needed
-to satisfy the `x,z` projection
-
-```
-Project
- ├─ columns: [x:0!null, z:1!null]
- └─ IndexedTableAccess(xy)
-     ├─ index: [xy.y]
-     ├─ static: [{(0, ∞)}]
-     └─ columns: [x z]
-=>
-Project
- ├─ columns: [x:0!null, z:1!null]
- └─ IndexedTableAccess(xy)
-     ├─ index: [xy.x,xy.z]
-     ├─ static: [{(0, ∞), [NULL, ∞)}]
-     └─ columns: [x z]
-```
-
-The second is about twice as fast, because it performs half as many index lookups:
-
-```
-BenchmarkCovering/covering_lookup_pre-opt
-BenchmarkCovering/covering_lookup_pre-opt-12         	   13773	     92543 ns/op
-BenchmarkCovering/covering_lookup_post-opt
-BenchmarkCovering/covering_lookup_post-opt-12        	   23208	     44561 ns/op
-```
+1. [Joins](#joins)
+   1. [Join operators](#join-operators)
+   2. [Join order](#join-order)
+2. [Decorrelate Subqueries](#decorrelate-subqueries)
+3. [Indexscan vs TableScan](#indexscan-vs-tablescan)
+4. [Covering Index Lookup](#covering-index-lookup)
+5. [Pushdown](#pushdown)
+6. [Pruning](#pruning-projections)
+   1. [Pruning Tablescans](#pruning-tablescan)
+   1. [Pruning Joins](#pruning-join)
+7. [Text vs Varchar](#text-vs-varchar)
 
 ## Joins
 
@@ -152,7 +48,7 @@ The exists subquery is similar to the inner join, where we will read `uv`
 soon as we find a single match, rather than finishing scanning `uv`. On
 average we will stop after 50% of the table has been compared.
 
-The lookup join is predictably fast, because we use an index to find 
+The lookup join is predictably fast, because we use an index to find
 the matching `uv.u` for a given `xy.x` without reading any non-matching
 rows.
 
@@ -275,13 +171,131 @@ LookupJoin
 ```
 
 If we cost the join order using filter selectivity, the second query performs 1
-iteration vs ~1000 for the default: 
+iteration vs ~1000 for the default:
 
 ```
 BenchmarkJoinOrder/lookup_join_order_pre-opt
 BenchmarkJoinOrder/lookup_join_order_pre-opt-12         	    2409	    419858 ns/op
 BenchmarkJoinOrder/lookup_join_order_post-opt
 BenchmarkJoinOrder/lookup_join_order_post-opt-12        	  200960	      5220 ns/op
+```
+
+## Decorrelate Subqueries
+
+Subqueries can either be cacheable, or non-cacheable. The later are also
+called "correlated" subqueries, because they need to be wholesale executed
+once for each row in the outer scope.
+
+The first plan below executes the EXISTS subquery once for each `xy` row.
+It is not cacheable because its execution depends on `xy.x`; it is correlated
+to the outer scope. The second plan hoists the filter, freeing the subquery
+into a cacheable form:
+
+```
+Filter
+ ├─ EXISTS Subquery
+ │   ├─ cacheable: false
+ │   └─ Filter
+ │       ├─ (x = 0)
+ │       └─ Table
+ │           └─ name: uv
+ └─ Table
+     ├─ name: xy
+     └─ columns: [x y z w]
+=>
+Filter
+ ├─ EXISTS Subquery
+ │   ├─ cacheable: true
+ │   └─ Table
+ │       └─ name: uv
+ └─ Filter
+     ├─ Eq
+     │   ├─ x:0!null
+     │   └─ 0 (bigint)
+     └─ Table
+         ├─ name: xy
+         └─ columns: [x y z w]
+```
+
+The cacheable form executes the subquery once, rather than 100 times:
+
+```
+BenchmarkDecorrelate/uncorrelated_subquery_pre-opt
+BenchmarkDecorrelate/uncorrelated_subquery_pre-opt-12         	      46	  22258375 ns/op
+BenchmarkDecorrelate/uncorrelated_subquery_post-opt
+BenchmarkDecorrelate/uncorrelated_subquery_post-opt-12        	    5415	    193153 ns/op
+```
+
+## Indexscan vs Tablescan
+
+It is common to push a permissive filter into a tablescan.
+The result is that we scan the entire table, just in a more
+expensive way.
+
+The plans below compare a tablescan that will read every row
+with the index range scan machinery, versus reading every row:
+
+```
+Project
+ ├─ columns: [x:0!null, y:1!null, z:2!null]
+ └─ IndexedTableAccess(xy)
+     ├─ index: [xy.y]
+     ├─ static: [{(-1, ∞)}]
+     └─ columns: [x y z w]
+=>
+Project
+ ├─ columns: [x:0!null, y:1!null, z:2!null]
+ └─ Table
+     ├─ name: xy
+     └─ columns: [x y z w]
+```
+
+Using the index range scan machinery introduces a non-negligible overhead:
+
+```
+BenchmarkIndexScan/index_scan_pre-opt
+BenchmarkIndexScan/index_scan_pre-opt-12         	     830	   1421220 ns/op
+BenchmarkIndexScan/index_scan_post-opt
+BenchmarkIndexScan/index_scan_post-opt-12        	    1239	    886823 ns/op
+```
+
+## Covering Index Lookup
+
+Different indexes can be used to read data from disk. A "covering" index
+scan is one that provides all columns projected from the scan. A "noncovering"
+scan has to read from the lookup index, and then do a second read into the primary
+key to fill out additional rows.
+
+The first query uses the `xy.y` index to read `(y): (x)`, (`y` is the secondary key,
+`x` is the primary key), but is still missing `z`. So the first query must
+do a lookup into the primary key to fetch the remaining field.
+
+The second query is keyed on `(x, z) : ()`, and already has the fields needed
+to satisfy the `x,z` projection
+
+```
+Project
+ ├─ columns: [x:0!null, z:1!null]
+ └─ IndexedTableAccess(xy)
+     ├─ index: [xy.y]
+     ├─ static: [{(0, ∞)}]
+     └─ columns: [x z]
+=>
+Project
+ ├─ columns: [x:0!null, z:1!null]
+ └─ IndexedTableAccess(xy)
+     ├─ index: [xy.x,xy.z]
+     ├─ static: [{(0, ∞), [NULL, ∞)}]
+     └─ columns: [x z]
+```
+
+The second is about twice as fast, because it performs half as many index lookups:
+
+```
+BenchmarkCovering/covering_lookup_pre-opt
+BenchmarkCovering/covering_lookup_pre-opt-12         	   13773	     92543 ns/op
+BenchmarkCovering/covering_lookup_post-opt
+BenchmarkCovering/covering_lookup_post-opt-12        	   23208	     44561 ns/op
 ```
 
 ## Pushdown
@@ -317,7 +331,7 @@ BenchmarkPushdown/pushdown_filter_post-opt-12        	  520180	      2663 ns/op
 
 ## Pruning Projections
 
-### Tablescan
+### Pruning Tablescan
 
 Projection pruning is the process of limiting the number of rows
 returned by a child relation.
@@ -356,7 +370,7 @@ BenchmarkPrune/prune_projection_post-opt
 BenchmarkPrune/prune_projection_post-opt-12        	    5977	    258016 ns/op
 ```
 
-### Join
+### Pruning Join
 
 The second benchmark performs the same optimization on a join, selecting
 only `xy.x` and `uv.u` before the join:
