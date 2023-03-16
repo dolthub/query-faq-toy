@@ -142,7 +142,7 @@ expecting a lookup join of `uv X xy` to cost ~1000 units of CPU, vs `xy X uv`
 to cost ~10_000 units.
 
 But the filter on `uv` has a selectivity of 99.9999%, reducing the output
-cardinality of `uv` to 1 (a single row). So in reality, ``uv X xy` costs ~1 unit
+cardinality of `uv` to 1 (a single row). So in reality, `uv X xy` costs ~1 unit
 of computation:
 
 ```
@@ -189,9 +189,9 @@ BenchmarkJoinOrder/lookup_join_order_post-opt-12        	  200960	      5220 ns/
 
 ## Decorrelate Subqueries
 
-Subqueries can either be cacheable, or non-cacheable. The later are also
-called "correlated" subqueries, because they need to be wholesale executed
-once for each row in the outer scope.
+Subqueries can either be cacheable or non-cacheable. The later are also
+called a "correlated" subquery, which run one whole execution for each row
+in the outer scope.
 
 The first plan below executes the EXISTS subquery once for each `xy` row.
 It is not cacheable because its execution depends on `xy.x`; it is correlated
@@ -240,7 +240,8 @@ The result is that we scan the entire table, just in a more
 expensive way.
 
 The plans below compare a tablescan that will read every row
-with the index range scan machinery, versus reading every row:
+with the index range scan machinery, versus reading every row
+as an unordered scan:
 
 ```
 Project
