@@ -338,7 +338,7 @@ Going back to the original query:
 There is a lot of output here, can break it down step by step. Refer to the
 diagram below for a visualization of the join tree (in blue).
 
-![join-tree](./perf-deep-dive-plan.png)
+![join-tree](./images/max-perf-deep-dive-plan.png)
 
 The entry  level scope is an aggregation projecting `COUNT(a.name)`. The main
 input into that aggregation is a three-way join between `cte3`, `plants`, and
@@ -426,7 +426,7 @@ Serving web UI on http://localhost:8080
 
 Opening `http://localhost:8080/flamegraph`...
 
-![profile-before](./perf-deep-dive-before.png)
+![profile-before](./images/max-perf-deep-dive-before.png)
 
 The flamegraph gives us an aggregated call stack. Vertical bars
 indicated nested function calls. The width of a specific bar indicates the
@@ -495,8 +495,13 @@ without having to reference the primary key:
 +------------------------------------------------------------------------+
 ```
 
-The profile shows that we now spend ~70% of runtime in `loadSecondary` now.
-Timing the query execution shows a more dramatic 50% speedup, 800ms compared
+The profile shows that we now spend ~70% of runtime in `loadSecondary` now,
+an improvement from ~80%:
+
+![covering-profile](./images/max-perf-deep-dive-covering.png)
+
+
+The latency difference is even more dramatic: 800ms compared
 to 1.6 seconds before:
 
 ```
@@ -547,7 +552,7 @@ limit 200
 Here is a latency plot of our simplified query run with every combination of
 join orders and operators:
 
-![hints](./perf-deep-dive-hints.png)
+![hints](./images/max-perf-deep-dive-hints.png)
 
 One takeaway is the `JOIN_ORDER(a,p)` is generally faster. We rationalize
 this by observing that the filters on `animals` reduces its cardinality to
@@ -682,7 +687,7 @@ as much time building the row (`joinIter.buildRow` 20%) and evaluating the
 join condition (`conditionIsTrue` 20%) as we do reading data from disk
 (`loadPrimary` 3%, `loadSecondary` 27%).
 
-![profile-after](./perf-deep-dive-after.png)
+![profile-after](./images/max-perf-deep-dive-after.png)
 
 # Summary
 
